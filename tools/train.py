@@ -23,6 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("config", metavar="FILE", help="config file")
     parser.add_argument("--run-dir", metavar="DIR", help="run directory")
+    parser.add_argument("--use-attn", action='store_true', default=True)
     args, opts = parser.parse_known_args()
 
     configs.load(args.config, recursive=True)
@@ -72,7 +73,10 @@ def main():
             cfg["sync_bn"] = dict(exclude=[])
         model = convert_sync_batchnorm(model, exclude=cfg["sync_bn"]["exclude"])
 
-    logger.info(f"Model:\n{model}")
+    if args.use_attn:
+        model.activate_attn()
+
+    # logger.info(f"Model:\n{model}")
     train_model(
         model,
         datasets,

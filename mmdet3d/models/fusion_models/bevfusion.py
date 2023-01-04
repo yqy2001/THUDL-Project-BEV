@@ -1,3 +1,5 @@
+import math
+
 from typing import Any, Dict
 
 import torch
@@ -80,6 +82,32 @@ class BEVFusion(Base3DFusionModel):
                     self.loss_scale[name] = 1.0
 
         self.init_weights()
+
+        self.use_attn = False
+
+    def activate_attn(self):
+        # attn
+        self.use_attn = True
+        self.attn_hd = 256
+        self.query_camera = nn.Linear(80, self.attn_hd)
+        torch.nn.init.xavier_uniform_(self.query_camera.weight)
+        # self.key_camera = nn.Linear(80, self.attn_hd)
+        # torch.nn.init.xavier_uniform_(self.key_camera.weight)
+        # self.value_camera = nn.Linear(80, self.attn_hd)
+        # torch.nn.init.xavier_uniform_(self.value_camera.weight)
+        self.proj_camera = nn.Linear(self.attn_hd, 80)
+        torch.nn.init.xavier_uniform_(self.proj_camera.weight)
+
+        # self.query_lidar = nn.Linear(256, self.attn_hd)
+        # torch.nn.init.xavier_uniform_(self.query_lidar.weight)
+        # self.key_lidar = nn.Linear(256, self.attn_hd)
+        # torch.nn.init.xavier_uniform_(self.key_lidar.weight)
+        # self.value_lidar = nn.Linear(256, self.attn_hd)
+        # torch.nn.init.xavier_uniform_(self.value_lidar.weight)
+        # self.proj_lidar = nn.Linear(self.attn_hd, 256)
+        # torch.nn.init.xavier_uniform_(self.proj_lidar.weight)
+
+        self.attn_drop = nn.Dropout(0.5)
 
     def init_weights(self) -> None:
         if "camera" in self.encoders:
@@ -240,15 +268,42 @@ class BEVFusion(Base3DFusionModel):
                     lidar_aug_matrix,
                     metas,
                 )
+                if self.use_attn:
+                    bsz, hd_cam, size_cam, size_cam = feature.shape
+                    self.cam_hd = hd_cam
+                    q_camera = self.query_camera(feature.permute(0, 2, 3, 1)).view(bsz, size_cam*size_cam, self.attn_hd)  # [bsz, 180 * 180, 256]
+                    # k_camera = self.key_camera(feature.permute(0, 2, 3, 1)).view(bsz, size_cam*size_cam, self.attn_hd)
+                    # v_camera = self.value_camera(feature.permute(0, 2, 3, 1)).view(bsz, size_cam*size_cam, self.attn_hd)
+                    # q_camera = feature.reshape(feature.shape[0], feature.shape[1], -1)
+                    # k_camera = feature.reshape(feature.shape[0], feature.shape[1], -1)
+                    # v_camera = feature.reshape(feature.shape[0], feature.shape[1], -1)
             elif sensor == "lidar":
                 feature = self.extract_lidar_features(points)
+                if self.use_attn:
+                    bsz, hd_lidar, size_lidar, size_lidar = feature.shape
+                    self.lidar_hd = hd_lidar
+                    # q_lidar = self.query_lidar(feature.permute(0, 2, 3, 1)).view(bsz, size_lidar*size_lidar, self.attn_hd)  # [bsz, 180 * 180, attn_hd]
+                    # k_lidar = self.key_lidar(feature.permute(0, 2, 3, 1)).view(bsz, size_lidar*size_lidar, self.attn_hd)
+                    # v_lidar = self.value_lidar(feature.permute(0, 2, 3, 1)).view(bsz, size_lidar*size_lidar, self.attn_hd)
+                    # q_lidar = feature.reshape(feature.shape[0], feature.shape[1], -1)
+                    # k_lidar = feature.reshape(feature.shape[0], feature.shape[1], -1)
+                    # v_lidar = feature.reshape(feature.shape[0], feature.shape[1], -1)
+                    lidar_feature = feature
             else:
                 raise ValueError(f"unsupported sensor: {sensor}")
-            features.append(feature)
+            if not self.use_attn:
+                features.append(feature)
 
-        if not self.training:
+        if not self.training and not self.use_attn:
             # avoid OOM
             features = features[::-1]
+
+        # features: camera [4, 80, 180, 180], lidar [4, 256, 180, 180]
+        if self.use_attn:
+            camera_feature = self.MSA(q_camera, lidar_feature.view(bsz, size_lidar*size_lidar, self.attn_hd), lidar_feature.view(bsz, size_lidar*size_lidar, self.attn_hd), type="cam").view(bsz, size_cam, size_cam, hd_cam).permute(0, 3, 1, 2)
+            # lidar_feature = self.MSA(q_lidar, k_camera, v_camera, type="lidar").view(bsz, size_lidar, size_lidar, hd_lidar).permute(0, 3, 1, 2)
+
+            features = [camera_feature, lidar_feature]
 
         if self.fuser is not None:
             x = self.fuser(features)
@@ -303,3 +358,30 @@ class BEVFusion(Base3DFusionModel):
                 else:
                     raise ValueError(f"unsupported head: {type}")
             return outputs
+
+    def MSA(self, query, key, value, num_heads=1, type="cam"):
+
+        N, S, E = query.shape
+        N, T, E = key.shape
+
+        assert E % num_heads == 0
+        head_dim = E // num_heads
+
+        # q: [N*num_heads, S, head_dim]
+        q = query.transpose(0, 1).contiguous().view(S, N * num_heads, head_dim).transpose(0, 1)
+        # [N*num_heads, T, head_dim]
+        k = key.transpose(0, 1).contiguous().view(T, N * num_heads, head_dim).transpose(0, 1)
+        v = value.transpose(0, 1).contiguous().view(T, N * num_heads, head_dim).transpose(0, 1)
+
+        q = q / math.sqrt(E)
+        attn = torch.bmm(q, k.transpose(-2, -1))  # [N*num_heads, S, T]
+        attn = F.softmax(attn, dim=-1)
+        attn = self.attn_drop(attn)
+        output = torch.bmm(attn, v)  # (N*H, S, T) x (N*H, T, E/H) = (N*H, S, E/H)
+        output = output.transpose(0, 1).contiguous().view(S*N, E)  # (N*S, E)
+        if type == "cam":
+            output = self.proj_camera(output).view(S, N, self.cam_hd).transpose(0, 1)
+        else:
+            output = self.proj_lidar(output).view(S, N, self.lidar_hd).transpose(0, 1)
+
+        return output
