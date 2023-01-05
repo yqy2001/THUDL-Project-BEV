@@ -23,7 +23,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("config", metavar="FILE", help="config file")
     parser.add_argument("--run-dir", metavar="DIR", help="run directory")
-    parser.add_argument("--use-attn", action='store_true', default=True)
+    parser.add_argument("--use-attn", action='store_true', default=False)
     args, opts = parser.parse_known_args()
 
     configs.load(args.config, recursive=True)
