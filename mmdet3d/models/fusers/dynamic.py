@@ -36,4 +36,4 @@ class DynamicFuser(nn.Module):
 
     def forward(self, inputs: List[torch.Tensor]) -> torch.Tensor:
         ct = self.channel_concate(torch.cat(inputs, dim=1))
-        return self.se(ct)
+        return self.se_block(ct)
