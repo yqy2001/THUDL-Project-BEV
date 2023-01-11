@@ -1,3 +1,31 @@
+# BEVFusion
+This is an extension of [BEVFusion](https://arxiv.org/abs/2205.13542) with many fusion methods implemented and evaluated on nuScenes dataset.
+
+## Usage
+### Requirements
+As described [here](https://github.com/mit-han-lab/bevfusion), the code is built with following libraries:
+- Python >= 3.8, <3.9
+- OpenMPI = 4.0.4 and mpi4py = 3.0.3 (Needed for torchpack)
+- Pillow = 8.4.0
+- PyTorch >= 1.9, <= 1.10.2
+- tqdm
+- torchpack
+- mmcv = 1.4.0
+- mmdetection = 2.20.0
+- nuscenes-dev-kit
+
+After installing these dependencies, please run this command to install the codebase:
+
+```bash
+python setup.py develop
+```
+
+Or alternatively, simply run 
+
+```bash
+conda env create -n <name> -f bevmit.yaml
+```
+
 ### Running
 
 Prepare dataset and pretrained models on AIR-slurm before running:
@@ -15,3 +43,31 @@ torchpack dist-run -np 2 python tools/train.py configs/nuscenes/det/transfusion/
 Change batch size per gpu to accommodate different GPU memory: 
 
 >  ./configs/nuscenes/default.yaml   `samples_per_gpu`
+
+### Evaluation
+
+For BEVFusion with alignment and fusion module (BEVFusion-flow), if evaluated on 3D object detection task, please run:
+
+```bash
+torchpack dist-run -np ${GPUS} python tools/test.py configs/nuscenes/det/fusion-det-flow.yaml ${CHECKPOINT} --eval bbox
+```
+
+Otherwise, if evaluated on segmentation task, please run:
+
+```bash
+torchpack dist-run -np ${GPUS} python tools/test.py configs/nuscenes/seg/fusion-bev256d2-lss-flow.yaml ${CHECKPOINT} --eval map 
+```
+
+### Training
+
+For BEVFusion with alignment and fusion module (BEVFusion-flow), if trained on 3D object detection task, please run:
+
+```bash
+torchpack dist-run -np ${GPUS} python tools/train.py configs/nuscenes/det/fusion-det-flow.yaml
+```
+
+Otherwise, if trained on segmentation task, please run:
+
+```bash
+torchpack dist-run -np ${GPUS} python tools/train.py configs/nuscenes/seg/fusion-bev256d2-lss-flow.yaml
+```
