@@ -71,3 +71,10 @@ Otherwise, if trained on segmentation task, please run:
 ```bash
 torchpack dist-run -np ${GPUS} python tools/train.py configs/nuscenes/seg/fusion-bev256d2-lss-flow.yaml
 ```
+
+For BEVFusion with cross-attention, the modifications are in the `./mmdet3d/models/fusion_models/bevfusion.py` file. To train the model, please first change the use-attn flag to `True` (line 26 of `tools/train.py`) to activate cross-attention layers, then run:
+
+```shell
+torchpack dist-run -np ${GPUS} python tools/train.py configs/nuscenes/det/transfusion/secfpn/camera+lidar/swint_v0p075/convfuser.yaml --model.encoders.camera.backbone.init_cfg.checkpoint pretrained/swint-nuimages-pretrained.pth --load_from pretrained/lidar-only-det.pth
+```
+
